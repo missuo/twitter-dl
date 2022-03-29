@@ -1,0 +1,13 @@
+[package]
+name = "twitter-dl"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0.56"
+clap = { version = "3.1.6", features = ["derive"] }
+maplit = "1.0.2"
+reqwest = { version = "0.11" }
+serde = { version = "1.0.136", features = ["derive"] }
+serde_json = "1.0.79"
+tokio = { version = "1.17.0", features = ["full"] }
