@@ -2,12 +2,16 @@ mod model;
 mod twitter;
 
 use crate::model::DataFile;
-use crate::twitter::{Authentication, TwitterClient};
+use crate::twitter::v1::TwitterClientV1;
+use crate::twitter::TwitterClient;
 use anyhow::{bail, Context};
 use clap::Parser;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use tokio::fs;
+use twitter::v2::TwitterClientV2;
+use twitter::Authentication;
 
 #[derive(Parser, Debug)]
 #[clap(version)]
@@ -36,6 +40,9 @@ struct Args {
     /// Continue even if an account fails to download
     #[clap(long)]
     continue_on_error: bool,
+    /// Use Twitter API 2 (Warning: Does not support Video and Gif downloads)
+    #[clap(long)]
+    use_api_v2: bool,
 }
 
 #[tokio::main]
@@ -57,7 +64,14 @@ async fn main2() -> anyhow::Result<()> {
     let auth =
         serde_json::from_str::<Authentication>(&auth).context("Unable to deserialize auth file")?;
     let usernames = parse_usernames(&args).await?;
-    let client = TwitterClient::new(&auth)?;
+
+    let client: Arc<dyn TwitterClient> = if args.use_api_v2 {
+        println!("Using Twitter API v2");
+        Arc::new(TwitterClientV2::new(&auth)?)
+    } else {
+        println!("Using Twitter API v1.1");
+        Arc::new(TwitterClientV1::new(&auth))
+    };
 
     for account in usernames {
         download_account(
@@ -100,7 +114,7 @@ async fn download_account(
     _videos: bool,
     out_dir: &Path,
     rescan: bool,
-    twitter: &TwitterClient,
+    twitter: &Arc<dyn TwitterClient>,
 ) -> anyhow::Result<()> {
     let user_id = twitter
         .get_id_for_username(username)

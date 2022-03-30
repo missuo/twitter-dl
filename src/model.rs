@@ -34,12 +34,25 @@ impl Ord for Tweet {
 
 #[derive(Deserialize, Serialize, Debug)]
 pub struct Media {
+    pub id: u64,
     pub r#type: MediaType,
     pub file_name: Option<String>,
-    pub url: String,
+    pub url: Option<String>,
+}
+
+impl Media {
+    pub fn new(id: u64, r#type: MediaType, url: Option<String>) -> Self {
+        Self {
+            id,
+            r#type,
+            file_name: None,
+            url,
+        }
+    }
 }
 
 #[derive(Deserialize, Serialize, Debug)]
+#[serde(rename_all = "snake_case")]
 pub enum MediaType {
     Video,
     Photo,

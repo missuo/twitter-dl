@@ -1,5 +1,9 @@
+//! There doesn't yet seem to be a good Rust client that uses API V2
+
 use crate::model::{Media, MediaType, Tweet};
+use crate::twitter::{Authentication, TwitterClient};
 use anyhow::{anyhow, bail, Context};
+use async_trait::async_trait;
 use maplit::hashmap;
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION};
 use reqwest::{Client, Response, Url};
@@ -11,13 +15,8 @@ use std::time::Duration;
 const TIMEOUT_SEC: u64 = 10;
 
 #[derive(Clone)]
-pub struct TwitterClient {
+pub struct TwitterClientV2 {
     client: Client,
-}
-
-#[derive(Deserialize)]
-pub struct Authentication {
-    bearer_token: String,
 }
 
 #[derive(Deserialize)]
@@ -80,11 +79,11 @@ struct GetTweetsMedia {
 #[serde(tag = "type")]
 enum GetTweetsMediaVariant {
     #[serde(rename = "video")]
-    Video { preview_image_url: String },
+    Video,
     #[serde(rename = "photo")]
     Photo { url: String },
     #[serde(rename = "animated_gif")]
-    Gif { preview_image_url: String },
+    Gif,
 }
 
 #[derive(Deserialize)]
@@ -117,7 +116,7 @@ async fn deserialize_response<T: DeserializeOwned>(response: Response) -> anyhow
     })
 }
 
-impl TwitterClient {
+impl TwitterClientV2 {
     pub fn new(auth: &Authentication) -> anyhow::Result<Self> {
         let mut headers = HeaderMap::new();
         let value = format!("Bearer {}", auth.bearer_token);
@@ -131,14 +130,7 @@ impl TwitterClient {
         })
     }
 
-    pub async fn get_id_for_username(&self, username: &str) -> anyhow::Result<u64> {
-        let url = Url::from_str("https://api.twitter.com/2/users/by/username/").unwrap();
-        let url = url.join(username).unwrap();
-        let response = self.client.get(url).send().await?;
-        let response = deserialize_response::<ByUsernameResponse>(response).await?;
-        Ok(response.data.id.parse().context("Couldn't parse user id")?)
-    }
-
+    // https://developer.twitter.com/en/docs/twitter-api/tweets/timelines/api-reference/get-users-id-tweets
     async fn get_tweets_for_user(
         &self,
         user_id: u64,
@@ -150,6 +142,7 @@ impl TwitterClient {
         let mut query = hashmap! {
             "exclude" => "retweets".to_string(),
             "max_results" => "100".to_string(),
+            // Including `preview_image_url` ensures we do at least get video Ids
             "media.fields" => "url,type,media_key,preview_image_url".to_string(),
             "expansions" => "attachments.media_keys".to_string(),
         };
@@ -168,8 +161,19 @@ impl TwitterClient {
         let tweets = convert_tweets(response.data, media)?;
         Ok((tweets, response.meta.next_token))
     }
+}
 
-    pub async fn get_all_tweets_for_user(
+#[async_trait]
+impl TwitterClient for TwitterClientV2 {
+    async fn get_id_for_username(&self, username: &str) -> anyhow::Result<u64> {
+        let url = Url::from_str("https://api.twitter.com/2/users/by/username/").unwrap();
+        let url = url.join(username).unwrap();
+        let response = self.client.get(url).send().await?;
+        let response = deserialize_response::<ByUsernameResponse>(response).await?;
+        Ok(response.data.id.parse().context("Couldn't parse user id")?)
+    }
+
+    async fn get_all_tweets_for_user(
         &self,
         user_id: u64,
         since_id: Option<u64>,
@@ -220,19 +224,20 @@ fn convert_tweets(
 
 impl GetTweetsMedia {
     fn convert(&self) -> anyhow::Result<Media> {
+        // There doesn't seem to be a way to get the Video URLs at the moment :(
+        // https://stackoverflow.com/questions/66211050/twitter-api-v2-video-url
         let (url, r#type) = match &self.variant {
-            GetTweetsMediaVariant::Video { preview_image_url } => {
-                (preview_image_url.to_string(), MediaType::Video)
-            }
-            GetTweetsMediaVariant::Photo { url } => (url.to_string(), MediaType::Photo),
-            GetTweetsMediaVariant::Gif { preview_image_url } => {
-                (preview_image_url.to_string(), MediaType::Gif)
-            }
+            GetTweetsMediaVariant::Video => (None, MediaType::Video),
+            GetTweetsMediaVariant::Photo { url } => (Some(url.to_string()), MediaType::Photo),
+            GetTweetsMediaVariant::Gif => (None, MediaType::Gif),
         };
-        Ok(Media {
-            r#type,
-            file_name: None,
-            url,
-        })
+        let pos = self
+            .media_key
+            .find('_')
+            .ok_or_else(|| anyhow!("Unexpected media key format"))?;
+        let id = &self.media_key[pos + 1..]
+            .parse()
+            .context("Unable to parse media key")?;
+        Ok(Media::new(*id, r#type, url))
     }
 }
