@@ -1,8 +1,9 @@
 mod model;
 mod twitter;
 
+use crate::model::DataFile;
 use crate::twitter::{Authentication, TwitterClient};
-use anyhow::Context;
+use anyhow::{bail, Context};
 use clap::Parser;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -16,7 +17,7 @@ struct Args {
     auth: PathBuf,
     /// Where to save downloaded media (a sub folder will be created for each username)
     #[clap(short, long, default_value = "./")]
-    destination: PathBuf,
+    out: PathBuf,
     /// Username(s) to download from (comma seperated)
     #[clap(short, long)]
     users: Option<String>,
@@ -32,6 +33,9 @@ struct Args {
     /// Rescan tweets that have already been loaded
     #[clap(long)]
     rescan: bool,
+    /// Continue even if an account fails to download
+    #[clap(long)]
+    continue_on_error: bool,
 }
 
 #[tokio::main]
@@ -43,7 +47,10 @@ async fn main() {
 }
 
 async fn main2() -> anyhow::Result<()> {
-    let args = Args::parse();
+    let args: Args = Args::parse();
+    if !args.out.is_dir() {
+        bail!("Destination must be a directory");
+    }
     let auth = fs::read_to_string(&args.auth)
         .await
         .context("Unable to read auth file")?;
@@ -54,10 +61,11 @@ async fn main2() -> anyhow::Result<()> {
 
     for account in usernames {
         download_account(
-            account,
+            &account,
             args.photos,
             args.videos,
-            &args.destination,
+            &args.out,
+            args.rescan,
             &client,
         )
         .await?;
@@ -80,19 +88,44 @@ async fn parse_usernames(args: &Args) -> anyhow::Result<Vec<String>> {
             account_names.insert(l.to_string());
         });
     }
+    if account_names.is_empty() {
+        bail!("No usernames provided")
+    }
     Ok(account_names.into_iter().collect())
 }
 
 async fn download_account(
-    username: String,
+    username: &str,
     _photos: bool,
     _videos: bool,
-    _destination: &Path,
+    out_dir: &Path,
+    rescan: bool,
     twitter: &TwitterClient,
 ) -> anyhow::Result<()> {
-    let id = twitter.get_id_for_username(&username).await.context("Unable to find user")?;
-    let tweets = twitter.get_all_tweets_for_user(&id, None).await?;
-    println!("{} {id}", username);
-    println!("{:#?}", tweets.len());
+    let user_id = twitter
+        .get_id_for_username(username)
+        .await
+        .context("Unable to find user")?;
+    let user_dir = get_directory(out_dir, username).await?;
+    let mut data_file = DataFile::load(&user_dir, user_id)
+        .await?
+        .unwrap_or_else(|| DataFile::new(user_id));
+    let since_id = if rescan {
+        None
+    } else {
+        data_file.latest_tweet_id()
+    };
+    let new_tweets = twitter.get_all_tweets_for_user(user_id, since_id).await?;
+    println!("Got {:?} new tweets for {}", new_tweets.len(), username);
+    data_file.merge_tweets(new_tweets);
+    data_file.save(&user_dir).await?;
     Ok(())
+}
+
+async fn get_directory(out_dir: &Path, username: &str) -> anyhow::Result<PathBuf> {
+    let dir = out_dir.join(username);
+    fs::create_dir_all(&dir)
+        .await
+        .context("Unable to create output directory")?;
+    Ok(dir)
 }

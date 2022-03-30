@@ -26,7 +26,9 @@ enum TwitterResponse<T> {
     Ok(T),
     // Detect the case where the API returns 200, but contains errors
     #[allow(unused)]
-    Error { errors: serde_json::Value },
+    Error {
+        errors: serde_json::Value,
+    },
 }
 
 #[derive(Deserialize)]
@@ -41,8 +43,9 @@ struct ByUsernameData {
 
 #[derive(Deserialize)]
 struct GetTweetsResponse {
+    #[serde(default)]
     data: Vec<GetTweetsTweet>,
-    includes: GetTweetsIncludes,
+    includes: Option<GetTweetsIncludes>,
     meta: GetTweetsMeta,
 }
 
@@ -60,7 +63,7 @@ pub struct GetTweetsTweetAttachment {
     media_keys: Vec<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 struct GetTweetsIncludes {
     #[serde(default)]
     media: Vec<GetTweetsMedia>,
@@ -101,14 +104,16 @@ async fn deserialize_response<T: DeserializeOwned>(response: Response) -> anyhow
         Err(e) => match serde_json::from_str::<serde_json::Value>(&text) {
             Ok(pretty) => {
                 let pretty = serde_json::to_string_pretty(&pretty).unwrap();
-                bail!(format!("Unable to deserialize due to: {e}\nContents:\n{pretty}"))
+                bail!(format!(
+                    "Unable to deserialize due to: {e}\nContents:\n{pretty}"
+                ))
             }
             Err(_) => bail!("Invalid JSON"),
         },
     };
     Ok(match twitter {
         TwitterResponse::Ok(ok) => ok,
-        TwitterResponse::Error { .. } => bail!(format!("{text}")),
+        TwitterResponse::Error { .. } => bail!(text),
     })
 }
 
@@ -126,18 +131,18 @@ impl TwitterClient {
         })
     }
 
-    pub async fn get_id_for_username(&self, username: &str) -> anyhow::Result<String> {
+    pub async fn get_id_for_username(&self, username: &str) -> anyhow::Result<u64> {
         let url = Url::from_str("https://api.twitter.com/2/users/by/username/").unwrap();
         let url = url.join(username).unwrap();
         let response = self.client.get(url).send().await?;
         let response = deserialize_response::<ByUsernameResponse>(response).await?;
-        Ok(response.data.id)
+        Ok(response.data.id.parse().context("Couldn't parse user id")?)
     }
 
     async fn get_tweets_for_user(
         &self,
-        user_id: &str,
-        since_id: Option<String>,
+        user_id: u64,
+        since_id: Option<u64>,
         pagination_token: Option<String>,
     ) -> anyhow::Result<(Vec<Tweet>, Option<String>)> {
         let url =
@@ -149,27 +154,31 @@ impl TwitterClient {
             "expansions" => "attachments.media_keys".to_string(),
         };
         if let Some(since_id) = since_id {
-            query.insert("since_id", since_id);
+            query.insert("since_id", since_id.to_string());
         }
         if let Some(pagination_token) = pagination_token {
             query.insert("pagination_token", pagination_token);
         }
         let response = self.client.get(url).query(&query).send().await?;
         let response = deserialize_response::<GetTweetsResponse>(response).await?;
-        let tweets = convert_tweets(response.data, response.includes.media)?;
+        let media = response
+            .includes
+            .map(|i| i.media)
+            .unwrap_or_else(Default::default);
+        let tweets = convert_tweets(response.data, media)?;
         Ok((tweets, response.meta.next_token))
     }
 
     pub async fn get_all_tweets_for_user(
         &self,
-        user_id: &str,
-        since_id: Option<String>,
+        user_id: u64,
+        since_id: Option<u64>,
     ) -> anyhow::Result<Vec<Tweet>> {
         let mut next_token = None;
         let mut results = Vec::new();
         loop {
             let (mut page, next) = self
-                .get_tweets_for_user(user_id, since_id.clone(), next_token.clone())
+                .get_tweets_for_user(user_id, since_id, next_token.clone())
                 .await?;
             results.append(&mut page);
             if next.is_none() {
@@ -217,7 +226,7 @@ impl GetTweetsMedia {
             }
             GetTweetsMediaVariant::Photo { url } => (url.to_string(), MediaType::Photo),
             GetTweetsMediaVariant::Gif { preview_image_url } => {
-                (preview_image_url.to_string(), MediaType::Photo)
+                (preview_image_url.to_string(), MediaType::Gif)
             }
         };
         Ok(Media {
