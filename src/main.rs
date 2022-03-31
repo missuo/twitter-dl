@@ -1,9 +1,11 @@
 mod download;
 mod download_task;
 mod model;
+mod serve;
 mod twitter;
 
 use clap::{Parser, Subcommand};
+use std::net::SocketAddr;
 use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
@@ -18,7 +20,7 @@ enum Commands {
     /// Download tweets
     Download(DownloadArgs),
     /// Serve the downloaded tweet viewer
-    Serve,
+    Serve(ServeArgs),
 }
 
 #[derive(Parser, Debug)]
@@ -70,19 +72,32 @@ pub enum FileExistsPolicy {
     Warn,
 }
 
+#[derive(Parser, Debug)]
+pub struct ServeArgs {
+    /// Location of tweet folders to serve
+    #[clap(default_value = "./")]
+    dir: PathBuf,
+    /// Socket to serve the server on
+    #[clap(short, long, default_value = "127.0.0.1:7008")]
+    socket: SocketAddr,
+    /// Don't launch the web browser
+    #[clap(short, long)]
+    no_launch: bool,
+}
+
 #[tokio::main]
 async fn main() {
-    if let Err(e) = main2().await {
+    let args: Args = Args::parse();
+    if let Err(e) = async {
+        match args.command {
+            Commands::Download(args) => crate::download::download(args).await?,
+            Commands::Serve(args) => crate::serve::serve(args).await?,
+        };
+        Ok::<_, anyhow::Error>(())
+    }
+    .await
+    {
         eprintln!("{:#}", e);
         std::process::exit(1);
     }
-}
-
-async fn main2() -> anyhow::Result<()> {
-    let args: Args = Args::parse();
-    match args.command {
-        Commands::Download(args) => crate::download::download(args).await?,
-        Commands::Serve => {}
-    };
-    Ok(())
 }
