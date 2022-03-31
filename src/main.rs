@@ -1,9 +1,11 @@
 mod download;
-mod download_task;
 mod model;
-mod serve;
 mod twitter;
 
+#[cfg(feature = "serve")]
+mod serve;
+
+use anyhow::bail;
 use clap::{Parser, Subcommand};
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -72,7 +74,7 @@ pub enum FileExistsPolicy {
     Warn,
 }
 
-#[derive(Parser, Debug)]
+#[derive(Parser, Debug, Clone)]
 pub struct ServeArgs {
     /// Location of tweet folders to serve
     #[clap(default_value = "./")]
@@ -91,7 +93,13 @@ async fn main() {
     if let Err(e) = async {
         match args.command {
             Commands::Download(args) => crate::download::download(args).await?,
-            Commands::Serve(args) => crate::serve::serve(args).await?,
+            Commands::Serve(args) => {
+                if cfg!(feature = "serve") {
+                    crate::serve::serve(args).await?
+                } else {
+                    bail!("Application must be built with the `serve` feature")
+                }
+            }
         };
         Ok::<_, anyhow::Error>(())
     }

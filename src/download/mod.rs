@@ -1,4 +1,4 @@
-use crate::download_task::{DownloadError, DownloadTask};
+use crate::download::download_task::{DownloadError, DownloadTask};
 use crate::model::{DataFile, MediaType, MODEL_VERSION};
 use crate::twitter::v1::TwitterClientV1;
 use crate::twitter::v2::TwitterClientV2;
@@ -12,6 +12,8 @@ use std::collections::BTreeSet;
 use std::path::Path;
 use std::time::Duration;
 use tokio::fs;
+
+mod download_task;
 
 pub async fn download(args: DownloadArgs) -> anyhow::Result<()> {
     if !args.out.is_dir() {
