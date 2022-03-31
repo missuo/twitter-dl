@@ -14,8 +14,10 @@ clap = { version = "3.1.6", features = ["derive"] }
 egg-mode = "0.16.0"
 futures = "0.3.21"
 maplit = "1.0.2"
+mime = { version = "0.3.16", optional = true }
 open = { version = "2.1.1", optional = true }
 reqwest = { version = "0.11" }
+rust-embed = { version = "6.3.0", optional = true }
 serde = { version = "1.0.136", features = ["derive"] }
 serde_json = "1.0.79"
 tempfile = "3.3.0"
@@ -26,4 +28,4 @@ url = { version = "2.2.2", features = ["serde"] }
 
 [features]
 default = ["serve"]
-serve = ["actix-files", "actix-rt", "actix-web", "open"]
+serve = ["actix-files", "actix-rt", "actix-web", "open", "rust-embed", "mime"]
