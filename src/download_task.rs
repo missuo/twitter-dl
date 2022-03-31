@@ -1,18 +1,11 @@
-use futures::{stream, StreamExt};
 use reqwest::Client;
 use std::fmt::Debug;
 use std::path::PathBuf;
-use std::time::Duration;
 use tempfile::NamedTempFile;
 use thiserror::Error;
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
-use tokio::sync::mpsc;
-use tokio::task::JoinHandle;
 use url::Url;
-
-pub type DownloadRx<C> = mpsc::Receiver<(C, Result<CompletedDownload, DownloadError>)>;
-pub type DownloadTx<C> = mpsc::Sender<(C, Result<CompletedDownload, DownloadError>)>;
 
 pub struct CompletedDownload {
     /// The destination the file was saved at
@@ -39,25 +32,23 @@ pub enum DownloadError {
     BadResponse(u16, Url),
 }
 
-struct DownloadTask<C> {
+pub struct DownloadTask<C> {
     /// HTTP connection pool
-    client: Client,
+    pub client: Client,
     /// Url to download
-    url: Url,
+    pub url: Url,
     /// Path to save the file at
-    destination: PathBuf,
+    pub destination: PathBuf,
     /// Arbitrary data to pass through
-    context: C,
-    /// A channel to send the result to
-    sender: DownloadTx<C>,
+    pub context: C,
     /// Whether to overwrite an existing file (will return error otherwise)
-    overwrite: bool,
+    pub overwrite: bool,
 }
 
 impl<C> DownloadTask<C> {
-    async fn download(self) {
+    pub async fn download(self) -> (Result<CompletedDownload, DownloadError>, C) {
         let result = download_impl(self.destination, self.url, self.client, self.overwrite).await;
-        self.sender.send((self.context, result)).await.ok();
+        (result, self.context)
     }
 }
 
@@ -93,50 +84,4 @@ async fn download_impl(
         saved_at: destination,
         written,
     })
-}
-
-pub struct BulkDownloader<C> {
-    client: Client,
-    tasks: Vec<DownloadTask<C>>,
-    tx: DownloadTx<C>,
-    rx: DownloadRx<C>,
-    concurrency: usize,
-}
-
-impl<C: Send + 'static> BulkDownloader<C> {
-    pub fn new(concurrency: usize, connect_timeout: Duration) -> Self {
-        let (tx, rx) = mpsc::channel(100);
-        Self {
-            client: Client::builder()
-                .connect_timeout(connect_timeout)
-                .build()
-                .unwrap(),
-            tasks: Default::default(),
-            tx,
-            rx,
-            concurrency,
-        }
-    }
-
-    pub fn push_task(&mut self, url: Url, destination: PathBuf, overwrite: bool, context: C) {
-        self.tasks.push(DownloadTask {
-            client: self.client.clone(),
-            url,
-            destination,
-            context,
-            sender: self.tx.clone(),
-            overwrite
-        })
-    }
-
-    pub fn run(self) -> (JoinHandle<()>, DownloadRx<C>) {
-        let handle = tokio::spawn(async move {
-            stream::iter(self.tasks)
-                .map(DownloadTask::download)
-                .buffer_unordered(self.concurrency)
-                .collect::<Vec<_>>()
-                .await;
-        });
-        (handle, self.rx)
-    }
 }

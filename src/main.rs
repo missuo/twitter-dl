@@ -1,5 +1,5 @@
 mod download;
-mod downloader;
+mod download_task;
 mod model;
 mod twitter;
 
@@ -56,7 +56,7 @@ pub struct DownloadArgs {
     /// Number of downloads to do concurrently
     #[clap(long, default_value_t = 4)]
     concurrency: usize,
-    #[clap(arg_enum, default_value_t = FileExistsPolicy::Warn)]
+    #[clap(long, arg_enum, default_value_t = FileExistsPolicy::Warn)]
     file_exists_policy: FileExistsPolicy,
 }
 

@@ -1,4 +1,4 @@
-use crate::downloader::{BulkDownloader, DownloadError};
+use crate::download_task::{DownloadError, DownloadTask};
 use crate::model::{DataFile, MediaType, MODEL_VERSION};
 use crate::twitter::v1::TwitterClientV1;
 use crate::twitter::v2::TwitterClientV2;
@@ -6,6 +6,8 @@ use crate::twitter::Authentication;
 use crate::twitter::TwitterClient;
 use crate::{DownloadArgs, FileExistsPolicy};
 use anyhow::{bail, Context};
+use futures::{stream, StreamExt};
+use reqwest::Client;
 use std::collections::BTreeSet;
 use std::path::Path;
 use std::time::Duration;
@@ -41,6 +43,11 @@ pub async fn download(args: DownloadArgs) -> anyhow::Result<()> {
         media_types.push(MediaType::Gif)
     }
 
+    let connection_pool = Client::builder()
+        .connect_timeout(Duration::from_secs(3))
+        .build()
+        .unwrap();
+
     for account in usernames {
         if let Err(e) = download_account(
             &account,
@@ -48,8 +55,9 @@ pub async fn download(args: DownloadArgs) -> anyhow::Result<()> {
             &media_types,
             &args.out,
             args.rescan,
-            &client,
+            client.as_ref(),
             &args.file_exists_policy,
+            &connection_pool,
         )
         .await
         {
@@ -84,14 +92,16 @@ async fn parse_usernames(args: &DownloadArgs) -> anyhow::Result<Vec<String>> {
     Ok(account_names.into_iter().collect())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn download_account(
     username: &str,
     concurrency: usize,
     media_types: &[MediaType],
     out_dir: &Path,
     rescan: bool,
-    twitter: &Box<dyn TwitterClient>,
+    twitter: &'_ dyn TwitterClient,
     file_exists_policy: &FileExistsPolicy,
+    connection_pool: &Client,
 ) -> anyhow::Result<()> {
     let user_id = twitter
         .get_id_for_username(username)
@@ -115,60 +125,66 @@ async fn download_account(
     println!("Got {:?} new tweets for {}", new, username);
     data_file.save(&user_dir).await?;
 
-    let mut downloader = BulkDownloader::new(concurrency, Duration::from_secs(3));
+    let mut downloads = vec![];
 
     for (tweet_index, tweet) in data_file.tweets.iter().enumerate() {
         for (media_index, media) in tweet.media.iter().enumerate() {
             if let Some((url, filename)) = media.is_download_candidate(tweet, media_types) {
-                downloader.push_task(
+                downloads.push(DownloadTask {
+                    client: connection_pool.clone(),
                     url,
-                    user_dir.join(&filename),
-                    file_exists_policy == &FileExistsPolicy::Overwrite,
-                    DownloadContext {
+                    destination: user_dir.join(&filename),
+                    context: DownloadContext {
                         tweet_index,
                         media_index,
                         filename,
                     },
-                );
+                    overwrite: file_exists_policy == &FileExistsPolicy::Overwrite,
+                });
             }
         }
     }
 
-    let (handle, mut rx) = downloader.run();
-
     let mut counter = 0;
-    if let Err(e) = async {
-        while let Some((ctx, result)) = rx.recv().await {
-            match result {
-                Ok(_completed) => {
+    let mut buffered = stream::iter(downloads)
+        .map(DownloadTask::download)
+        .buffer_unordered(concurrency);
+
+    while let Some((result, ctx)) = buffered.next().await {
+        match result {
+            Ok(_completed) => {
+                data_file.tweets[ctx.tweet_index].media[ctx.media_index].file_name =
+                    Some(ctx.filename);
+                data_file.save(&user_dir).await.ok();
+                counter += 1;
+            }
+            Err(e) => match e {
+                DownloadError::DestinationExists(..)
+                    if file_exists_policy == &FileExistsPolicy::Adopt =>
+                {
                     data_file.tweets[ctx.tweet_index].media[ctx.media_index].file_name =
                         Some(ctx.filename);
                     data_file.save(&user_dir).await.ok();
-                    counter += 1;
                 }
-                Err(e) => match e {
-                    DownloadError::DestinationExists(e) => {
-                        eprintln!("File: {} already exists, skipping", e.display());
-                    }
-                    DownloadError::BadResponse(c, url) if c == 404 => {
-                        eprintln!("File no longer available (404): {}, skipping", url);
-                    }
-                    _ => return Err(e.into()),
-                },
-            }
+                DownloadError::DestinationExists(e)
+                    if file_exists_policy == &FileExistsPolicy::Warn =>
+                {
+                    eprintln!("Warning: File: {} already exists, skipping", e.display());
+                }
+                DownloadError::BadResponse(c, url) if c == 404 => {
+                    eprintln!("File no longer available (404): {}, skipping", url);
+                }
+                _ => return Err(e.into()),
+            },
         }
-        Ok(())
     }
-    .await
-    {
-        handle.abort();
-        return Err(e);
-    }
+
     data_file
         .save(&user_dir)
         .await
         .context("Error saving data file")?;
-    println!("Downloaded {} new files for {}", counter, username);
+    println!("Downloaded {} files for {}", counter, username);
+
     Ok(())
 }
 
