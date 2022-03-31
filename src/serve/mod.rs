@@ -3,12 +3,15 @@ mod error;
 use crate::ServeArgs;
 use actix_files::Files;
 use actix_web::http::StatusCode;
+use actix_web::middleware::Logger;
 use actix_web::web::{Data, Path, ServiceConfig};
 use actix_web::{get, App, HttpResponse, HttpServer};
 use anyhow::{anyhow, bail, Context};
 use error::{HttpError, IntoHttpError};
 use futures::StreamExt;
 use rust_embed::RustEmbed;
+use std::net::SocketAddr;
+use std::time::Duration;
 use tokio::fs;
 use tokio_stream::wrappers::ReadDirStream;
 
@@ -59,7 +62,11 @@ async fn viewer(path: Path<String>) -> Result<HttpResponse, HttpError> {
 
 fn configure(cfg: &mut ServiceConfig, args: &ServeArgs) {
     cfg.service(list);
-    cfg.service(Files::new("/dir", &args.dir).prefer_utf8(true));
+    cfg.service(
+        Files::new("/dir", &args.dir)
+            .prefer_utf8(true)
+            .disable_content_disposition(),
+    );
     cfg.service(viewer);
 }
 
@@ -72,12 +79,20 @@ pub async fn serve(args: ServeArgs) -> anyhow::Result<()> {
         App::new()
             .app_data(Data::new(args2.clone()))
             .configure(|s| configure(s, &args2))
+            .wrap(Logger::default())
     })
     .bind(args.socket)?
     .run();
     if !args.no_launch {
-        open::that(format!("http://{}/", args.socket)).ok();
+        open_browser(args.socket);
     }
     server.await.context("Unable to run HTTP server")?;
     Ok(())
+}
+
+fn open_browser(socket: SocketAddr) {
+    tokio::task::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        open::that(format!("http://{}/", socket)).ok();
+    });
 }

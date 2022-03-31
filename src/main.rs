@@ -90,6 +90,7 @@ pub struct ServeArgs {
 #[tokio::main(flavor = "multi_thread")]
 async fn main() {
     let args: Args = Args::parse();
+    env_logger::init_from_env(env_logger::Env::new().default_filter_or("info"));
     if let Err(e) = async {
         match args.command {
             Commands::Download(args) => crate::download::download(args).await?,
