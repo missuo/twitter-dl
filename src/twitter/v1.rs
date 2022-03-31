@@ -1,5 +1,5 @@
 use crate::model::{Media, MediaType, Tweet};
-use crate::{Authentication, TwitterClient};
+use crate::twitter::{Authentication, TwitterClient};
 use anyhow::Context;
 use async_trait::async_trait;
 use egg_mode::entities::MediaEntity;
