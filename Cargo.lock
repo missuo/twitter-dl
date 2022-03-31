@@ -1275,13 +1275,18 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "chrono",
  "clap",
  "egg-mode",
+ "futures",
  "maplit",
  "reqwest",
  "serde",
  "serde_json",
+ "tempfile",
+ "thiserror",
  "tokio",
+ "url",
 ]
 
 [[package]]
@@ -1321,6 +1326,7 @@ dependencies = [
  "idna",
  "matches",
  "percent-encoding",
+ "serde",
 ]
 
 [[package]]

@@ -13,3 +13,10 @@ At present there are two main API versions, neither of which are good:
 |-------------|-----------------|-----------------|---------------|---------------------------|
 | 1.1         | ✅               | ✅               | ✅             | Yes                       |
 | 2.0         | ✅               | ❌               | ❌             | No                        |
+
+## Limitations
+
+- Doesn't yet support private accounts.
+- Can only download up to 3200 tweets (API limitations).
+- No option to download retweets.
+

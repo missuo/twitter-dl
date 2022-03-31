@@ -1,9 +1,11 @@
 use crate::model::{Media, MediaType, Tweet};
 use crate::{Authentication, TwitterClient};
-use anyhow::{anyhow, Context};
+use anyhow::Context;
 use async_trait::async_trait;
 use egg_mode::entities::MediaEntity;
 use egg_mode::Token;
+use std::str::FromStr;
+use url::Url;
 
 pub struct TwitterClientV1 {
     token: Token,
@@ -57,15 +59,17 @@ impl TryFrom<egg_mode::tweet::Tweet> for Tweet {
     type Error = anyhow::Error;
 
     fn try_from(tweet: egg_mode::tweet::Tweet) -> anyhow::Result<Self> {
-        let media = tweet
-            .entities
-            .media
-            .unwrap_or_default()
-            .into_iter()
-            .map(Media::try_from)
-            .collect::<Result<_, _>>()?;
+        let media = match tweet.extended_entities {
+            None => Vec::new(),
+            Some(entities) => entities
+                .media
+                .into_iter()
+                .map(Media::try_from)
+                .collect::<Result<_, _>>()?,
+        };
         Ok(Tweet {
             id: tweet.id,
+            timestamp: tweet.created_at.timestamp(),
             text: tweet.text,
             media,
         })
@@ -77,9 +81,11 @@ impl TryFrom<MediaEntity> for Media {
 
     fn try_from(entity: MediaEntity) -> anyhow::Result<Self> {
         Ok(match entity.media_type {
-            egg_mode::entities::MediaType::Photo => {
-                Media::new(entity.id, MediaType::Photo, Some(entity.media_url_https))
-            }
+            egg_mode::entities::MediaType::Photo => Media::new(
+                entity.id,
+                MediaType::Photo,
+                Some(Url::from_str(&entity.media_url_https)?),
+            ),
             egg_mode::entities::MediaType::Video => {
                 Media::new(entity.id, MediaType::Video, Some(get_video_url(&entity)?))
             }
@@ -90,16 +96,13 @@ impl TryFrom<MediaEntity> for Media {
     }
 }
 
-fn get_video_url(entity: &MediaEntity) -> anyhow::Result<String> {
-    let info = entity
-        .video_info
-        .as_ref()
-        .ok_or_else(|| anyhow!("Missing video info"))?;
+fn get_video_url(entity: &MediaEntity) -> anyhow::Result<Url> {
+    let info = entity.video_info.as_ref().context("Missing video info")?;
     let best_variant = info
         .variants
         .iter()
         .filter(|v| v.bitrate.is_some())
         .max_by_key(|v| v.bitrate.unwrap())
-        .ok_or_else(|| anyhow!("Missing video variant"))?;
-    Ok(best_variant.url.clone())
+        .context("Missing video variant")?;
+    Ok(Url::from_str(&best_variant.url)?)
 }

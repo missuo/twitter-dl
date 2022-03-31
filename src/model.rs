@@ -4,10 +4,18 @@ use std::cmp::Ordering;
 use std::collections::btree_map::BTreeMap;
 use std::path::Path;
 use tokio::fs;
+use url::Url;
+
+// If we introduce new features to the model we will want to refresh as much of the data
+// as possible. Although there is no guarantee we can be successful (because of the 3200)
+// tweet limit in the API, and that tweets may have since been deleted, so model changes must
+// always be backwards compatible with previous data.
+pub const MODEL_VERSION: u64 = 1;
 
 #[derive(Deserialize, Serialize, Debug)]
 pub struct Tweet {
     pub id: u64,
+    pub timestamp: i64,
     pub text: String,
     pub media: Vec<Media>,
 }
@@ -37,11 +45,11 @@ pub struct Media {
     pub id: u64,
     pub r#type: MediaType,
     pub file_name: Option<String>,
-    pub url: Option<String>,
+    pub url: Option<Url>,
 }
 
 impl Media {
-    pub fn new(id: u64, r#type: MediaType, url: Option<String>) -> Self {
+    pub fn new(id: u64, r#type: MediaType, url: Option<Url>) -> Self {
         Self {
             id,
             r#type,
@@ -49,9 +57,33 @@ impl Media {
             url,
         }
     }
+
+    // If true then return the URL to download, and filename to save as
+    pub fn is_download_candidate(
+        &self,
+        tweet: &Tweet,
+        media_types: &[MediaType],
+    ) -> Option<(Url, String)> {
+        if !media_types.contains(&self.r#type) {
+            return None;
+        }
+        // Only download if we haven't already got it
+        if self.file_name.is_some() {
+            return None;
+        }
+        // Only download if a URL is available
+        self.url.as_ref().map(|url| {
+            let dot_idx = url.path().rfind('.');
+            let ext = dot_idx
+                .map(|idx| url.path()[idx + 1..].to_string())
+                .unwrap_or_else(String::new);
+            let file_name = format!("{}_{}.{ext}", tweet.id, self.id);
+            (url.clone(), file_name)
+        })
+    }
 }
 
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Deserialize, Serialize, Debug, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum MediaType {
     Video,
@@ -63,6 +95,7 @@ pub enum MediaType {
 pub struct DataFile {
     pub user_id: u64,
     pub tweets: Vec<Tweet>,
+    pub version: u64,
 }
 
 impl DataFile {
@@ -70,6 +103,7 @@ impl DataFile {
         Self {
             user_id,
             tweets: vec![],
+            version: MODEL_VERSION,
         }
     }
 
@@ -98,16 +132,30 @@ impl DataFile {
             .context("Unable to write data file")
     }
 
-    pub fn merge_tweets(&mut self, new_tweets: Vec<Tweet>) {
+    /// Returns number of not seen before tweets
+    pub fn merge_tweets(&mut self, new_tweets: Vec<Tweet>) -> usize {
+        let mut new = 0;
         let existing = std::mem::take(&mut self.tweets);
         let mut map = existing
             .into_iter()
             .map(|t| (t.id, t))
             .collect::<BTreeMap<_, _>>();
-        for tweet in new_tweets {
-            map.insert(tweet.id, tweet);
+        for mut tweet in new_tweets {
+            // We don't want to overwrite the filenames though
+            if let Some(existing) = map.get(&tweet.id) {
+                for media in &mut tweet.media {
+                    if let Some(equal) = existing.media.iter().find(|m| m.id == media.id) {
+                        media.file_name = equal.file_name.clone();
+                    }
+                }
+            }
+            if map.insert(tweet.id, tweet).is_none() {
+                new += 1;
+            }
         }
         self.tweets = map.into_values().collect();
+        self.version = MODEL_VERSION;
+        new
     }
 
     pub fn latest_tweet_id(&self) -> Option<u64> {

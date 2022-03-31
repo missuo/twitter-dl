@@ -2,8 +2,9 @@
 
 use crate::model::{Media, MediaType, Tweet};
 use crate::twitter::{Authentication, TwitterClient};
-use anyhow::{anyhow, bail, Context};
+use anyhow::{bail, Context};
 use async_trait::async_trait;
+use chrono::DateTime;
 use maplit::hashmap;
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION};
 use reqwest::{Client, Response, Url};
@@ -52,6 +53,7 @@ struct GetTweetsResponse {
 pub struct GetTweetsTweet {
     id: String,
     text: String,
+    created_at: String,
     #[serde(default)]
     attachments: GetTweetsTweetAttachment,
 }
@@ -144,6 +146,7 @@ impl TwitterClientV2 {
             "max_results" => "100".to_string(),
             // Including `preview_image_url` ensures we do at least get video Ids
             "media.fields" => "url,type,media_key,preview_image_url".to_string(),
+            "tweet.fields" => "created_at".to_string(),
             "expansions" => "attachments.media_keys".to_string(),
         };
         if let Some(since_id) = since_id {
@@ -204,6 +207,7 @@ fn convert_tweets(
         .map(|tweet| {
             Ok(Tweet {
                 id: u64::from_str(&tweet.id)?,
+                timestamp: DateTime::parse_from_rfc3339(&tweet.created_at)?.timestamp(),
                 text: tweet.text,
                 media: tweet
                     .attachments
@@ -213,7 +217,7 @@ fn convert_tweets(
                         let m = media
                             .iter()
                             .find(|m| m.media_key == key)
-                            .ok_or_else(|| anyhow!("Missing media item"))?;
+                            .context("Missing media item")?;
                         m.convert()
                     })
                     .collect::<anyhow::Result<_>>()?,
@@ -234,10 +238,13 @@ impl GetTweetsMedia {
         let pos = self
             .media_key
             .find('_')
-            .ok_or_else(|| anyhow!("Unexpected media key format"))?;
+            .context("Unexpected media key format")?;
         let id = &self.media_key[pos + 1..]
             .parse()
             .context("Unable to parse media key")?;
+        let url = url
+            .map(|url| Url::from_str(&url))
+            .map_or(Ok(None), |url| url.map(Some))?;
         Ok(Media::new(*id, r#type, url))
     }
 }
