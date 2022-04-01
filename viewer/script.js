@@ -6,8 +6,7 @@ $( document ).ready(function() {
     const POSTS_DIV = $("#posts");
     const PAGE_SIZE = 100;
     const TYPE = $("#type")
-    const TOTAL = $("#total")
-    const SHOWING = $("#showing")
+    const RESULTS = $("#results")
     const SORT = $("#sort")
 
     let ALL_TWEETS = [];
@@ -45,7 +44,6 @@ $( document ).ready(function() {
         $.get(url).then(
             (res) => {
                 ALL_TWEETS = res.tweets.map((tweet) => Tweet.deserialize(tweet, base))
-                TOTAL.text(`Total: ${ALL_TWEETS.length}`)
                 apply_filters();
                 update_page_choice();
                 render_posts();
@@ -71,7 +69,7 @@ $( document ).ready(function() {
         clearTimeout(this.thread);
         this.thread = setTimeout(function() {
             refresh()
-        }, 150);
+        }, 300);
     });
 
     function refresh() {
@@ -118,11 +116,11 @@ $( document ).ready(function() {
 
     function render_posts() {
         POSTS_DIV.empty();
+        RESULTS.text(`Results: ${FILTERED_TWEETS.length}`)
         const page_number = parseInt(PAGE_CHOICE[0].value) - 1;
         const start = page_number * PAGE_SIZE
         const stop = (page_number + 1) * PAGE_SIZE
         const tweets = FILTERED_TWEETS.slice(start, stop);
-        SHOWING.text(`Showing: ${tweets.length}`)
         for (const tweet of tweets) {
             const render = tweet.render();
             POSTS_DIV.append(`<div class='post' id="${tweet.id}">${render}</div>`)
@@ -151,7 +149,7 @@ class Tweet {
     }
 
     matches_search(search) {
-        return this.text.includes(search)
+        return this.text.toLowerCase().includes(search.toLowerCase())
     }
 
     matches_type(type) {
