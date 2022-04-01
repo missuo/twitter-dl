@@ -1,5 +1,3 @@
-const IMAGE_REGEX = new RegExp('src=\"https:\\/\\/.+media.tumblr\\.com.+\"');
-
 $( document ).ready(function() {
     const BLOG_CHOICE = $("#blog-choice");
     const SEARCH = $("#search");
@@ -82,7 +80,7 @@ $( document ).ready(function() {
         render_posts();
     }
 
-    // Filters by search and selected page number
+    // Filters by search, type and sorting
     function apply_filters() {
         const search = SEARCH[0].value;
         const type = TYPE[0].value;
