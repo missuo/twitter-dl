@@ -20,3 +20,27 @@ At present there are two main API versions, neither of which are good:
 - Can only download up to 3200 tweets (API limitations).
 - No option to download retweets.
 
+## Install
+
+From latest git:
+```
+cargo install --git https://github.com/jacob-pro/twitter-dl
+```
+
+## Usage
+
+First create an `auth.json` file containing your `{ "bearer_token": "$TOKEN" }`
+
+Download Twitter account(s):
+
+```shell
+twitter-dl download --out  ./twitter --users $USERNAMES --photos --videos --gifs 
+```
+
+View the downloaded tweets in a basic web app:
+
+```shell
+twitter-dl serve --dir  ./twitter
+```
+
+For full usage try the `--help` command.

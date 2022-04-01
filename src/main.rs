@@ -80,11 +80,14 @@ pub struct ServeArgs {
     #[clap(default_value = "./")]
     dir: PathBuf,
     /// Socket to serve the server on
-    #[clap(short, long, default_value = "127.0.0.1:7008")]
+    #[clap(long, default_value = "127.0.0.1:7008")]
     socket: SocketAddr,
     /// Don't launch the web browser
-    #[clap(short, long)]
+    #[clap(long)]
     no_launch: bool,
+    /// Don't use TLS/HTTP2
+    #[clap(long)]
+    no_tls: bool,
 }
 
 #[tokio::main(flavor = "multi_thread")]

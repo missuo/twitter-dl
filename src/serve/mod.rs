@@ -10,10 +10,17 @@ use anyhow::{anyhow, bail, Context};
 use error::{HttpError, IntoHttpError};
 use futures::StreamExt;
 use rust_embed::RustEmbed;
-use std::net::SocketAddr;
+use rustls::{Certificate, PrivateKey, ServerConfig};
 use std::time::Duration;
 use tokio::fs;
 use tokio_stream::wrappers::ReadDirStream;
+
+// Generated with:
+// openssl req -x509 -newkey rsa:4096 -sha256 -days 14600 -nodes   -keyout "key.pem" \
+//  -out "cert.der" -subj "/CN=127.0.0.1" -outform der
+// openssl rsa -inform pem -in key.pem -outform der -out key.der
+const CERT: &[u8] = include_bytes!("cert.der");
+const PKEY: &[u8] = include_bytes!("key.der");
 
 #[derive(RustEmbed)]
 #[folder = "viewer/"]
@@ -75,24 +82,45 @@ pub async fn serve(args: ServeArgs) -> anyhow::Result<()> {
         bail!("expected a directory")
     }
     let args2 = args.clone();
-    let server = HttpServer::new(move || {
+
+    // Using TLS allows us to use ALPN for HTTP/2 which will make serving large
+    // quantities of media much quicker
+    let tls = ServerConfig::builder()
+        .with_safe_defaults()
+        .with_no_client_auth()
+        .with_single_cert(vec![Certificate(CERT.into())], PrivateKey(PKEY.into()))
+        .unwrap();
+
+    let mut server = HttpServer::new(move || {
         App::new()
             .app_data(Data::new(args2.clone()))
             .configure(|s| configure(s, &args2))
             .wrap(Logger::default())
-    })
-    .bind(args.socket)?
-    .run();
-    if !args.no_launch {
-        open_browser(args.socket);
+    });
+    if !args.no_tls {
+        server = server.bind_rustls(args.socket, tls)?;
+    } else {
+        server = server.bind(args.socket)?;
     }
+    let server = server.run();
+
+    if !args.no_launch {
+        open_browser(args);
+    }
+
     server.await.context("Unable to run HTTP server")?;
     Ok(())
 }
 
-fn open_browser(socket: SocketAddr) {
+fn open_browser(args: ServeArgs) {
     tokio::task::spawn(async move {
+        let url = if args.no_tls {
+            format!("http://{}/", args.socket)
+        } else {
+            format!("https://{}/", args.socket)
+        };
         tokio::time::sleep(Duration::from_millis(300)).await;
-        open::that(format!("http://{}/", socket)).ok();
+        open::that(&url).ok();
+        log::info!("Hosting at: {}", url);
     });
 }
