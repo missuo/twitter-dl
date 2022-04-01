@@ -109,7 +109,7 @@ async fn main() {
     }
     .await
     {
-        eprintln!("{:#}", e);
+        log::error!("{:#}", e);
         std::process::exit(1);
     }
 }

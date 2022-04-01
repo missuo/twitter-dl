@@ -27,10 +27,10 @@ pub async fn download(args: DownloadArgs) -> anyhow::Result<()> {
     let usernames = parse_usernames(&args).await?;
 
     let client: Box<dyn TwitterClient> = if args.api_v2 {
-        println!("Using Twitter API v2");
+        log::info!("Using Twitter API v2");
         Box::new(TwitterClientV2::new(&auth)?)
     } else {
-        println!("Using Twitter API v1.1");
+        log::info!("Using Twitter API v1.1");
         Box::new(TwitterClientV1::new(&auth))
     };
 
@@ -64,7 +64,7 @@ pub async fn download(args: DownloadArgs) -> anyhow::Result<()> {
         .await
         {
             if args.continue_on_error {
-                eprintln!("Error downloading tweets for: {}, ignoring...", account);
+                log::warn!("Error downloading tweets for: {}, ignoring...", account);
             } else {
                 return Err(e);
             }
@@ -117,14 +117,14 @@ async fn download_account(
         .await?
         .unwrap_or_else(|| DataFile::new(user_id));
     let since_id = if rescan || data_file.version < MODEL_VERSION {
-        println!("Refreshing all available tweets for {}", username);
+        log::info!("Refreshing all available tweets for {}", username);
         None
     } else {
         data_file.latest_tweet_id()
     };
     let new_tweets = twitter.get_all_tweets_for_user(user_id, since_id).await?;
     let new = data_file.merge_tweets(new_tweets);
-    println!("Got {:?} new tweets for {}", new, username);
+    log::info!("Got {:?} new tweets for {}", new, username);
     data_file.save(&user_dir).await?;
 
     let mut downloads = vec![];
@@ -171,10 +171,12 @@ async fn download_account(
                 DownloadError::DestinationExists(e)
                     if file_exists_policy == &FileExistsPolicy::Warn =>
                 {
-                    eprintln!("Warning: File: {} already exists, skipping", e.display());
+                    log::warn!("File: {} already exists, skipping", e.display());
                 }
                 DownloadError::BadResponse(c, url) if c == 404 => {
-                    eprintln!("File no longer available (404): {}, skipping", url);
+                    // If there is a 404, not much we can do, presumably the tweet has
+                    // been deleted at some point after we retrieved it
+                    log::warn!("File no longer available (404): {}, skipping", url);
                 }
                 _ => return Err(e.into()),
             },
@@ -185,7 +187,7 @@ async fn download_account(
         .save(&user_dir)
         .await
         .context("Error saving data file")?;
-    println!("Downloaded {} files for {}", counter, username);
+    log::info!("Downloaded {} files for {}", counter, username);
 
     Ok(())
 }
