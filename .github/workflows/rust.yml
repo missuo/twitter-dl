@@ -37,6 +37,8 @@ jobs:
     runs-on: windows-latest
     needs: [test, check-style]
     steps:
+      - uses: actions/checkout@v2
+
       - name: Compile Release
         run: cargo build --release
 
