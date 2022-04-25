@@ -18,11 +18,16 @@ jobs:
       - name: Cargo Test
         run: cargo test --workspace -- --nocapture
 
-      - name: Cargo Format Check
-        run: cargo fmt -- --check
-
       - name: Cargo Clippy Check
         run: cargo clippy --all-features --workspace -- -D warnings
+
+  check-style:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Cargo Format Check
+        run: cargo fmt -- --check
 
       - name: Cargo Sort Check
         run: cargo install cargo-sort --debug && cargo-sort --check --workspace
@@ -30,7 +35,7 @@ jobs:
   release:
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: windows-latest
-    needs: test
+    needs: [test, check-style]
     steps:
       - name: Compile Release
         run: cargo build --release
